@@ -1,0 +1,2097 @@
+---
+title: "Portfolio Dashboard"
+author: "Yang Wu"
+date: "1/5/2021"
+runtime: shiny
+output:
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    source_code: embed
+---
+
+```{r setup, message = FALSE}
+library(tidyverse)
+library(highcharter)
+library(tidyquant)
+library(PerformanceAnalytics)
+library(timetk)
+library(scales)
+library(zoo)
+library(shinydashboard)
+library(flexdashboard)
+library(shiny)
+```
+
+Sidebar {.sidebar}
+=====================================
+  
+```{r}
+fluidRow(
+  column(
+    6,
+    textInput("stock1", "ETF 1", "SPY")
+  ),
+  column(
+    5,
+    numericInput("w1", "Portf. %", 10, min = 1, max = 100)
+  )
+)
+
+fluidRow(
+  column(
+    6,
+    textInput("stock2", "ETF 2", "DIA")
+  ),
+  column(
+    5,
+    numericInput("w2", "Portf. %", 10, min = 1, max = 100)
+  )
+)
+
+fluidRow(
+  column(
+    6,
+    textInput("stock3", "ETF 3", "IJS")
+  ),
+  column(
+    5,
+    numericInput("w3", "Portf. %", 10, min = 1, max = 100)
+  )
+)
+
+fluidRow(
+  column(
+    6,
+    textInput("stock4", "ETF 4", "EEM")
+  ),
+  column(
+    5,
+    numericInput("w4", "Portf. %", 10, min = 1, max = 100)
+  )
+)
+
+fluidRow(
+  column(
+    6,
+    textInput("stock5", "ETF 5", "AGG")
+  ),
+  column(
+    5,
+    numericInput("w5", "Portf. %", 10, min = 1, max = 100)
+  )
+)
+
+fluidRow(
+  column(
+    6,
+    textInput("stock6", "ETF 6", "QQQ")
+  ),
+  column(
+    5,
+    numericInput("w6", "Portf. %", 10, min = 1, max = 100)
+  )
+)
+
+fluidRow(
+  column(
+    6,
+    textInput("stock7", "ETF 7", "VUG")
+  ),
+  column(
+    5,
+    numericInput("w7", "Portf. %", 10, min = 1, max = 100)
+  )
+)
+
+fluidRow(
+  column(
+    6,
+    textInput("stock8", "ETF 8", "VWO")
+  ),
+  column(
+    5,
+    numericInput("w8", "Portf. %", 10, min = 1, max = 100)
+  )
+)
+
+fluidRow(
+  column(
+    6,
+    textInput("stock9", "ETF 9", "VEU")
+  ),
+  column(
+    5,
+    numericInput("w9", "Portf. %", 10, min = 1, max = 100)
+  )
+)
+
+fluidRow(
+  column(
+    6,
+    textInput("stock10", "ETF 10", "DSI")
+  ),
+  column(
+    5,
+    numericInput("w10", "Portf. %", 10, min = 1, max = 100)
+  )
+)
+
+fluidRow(
+  column(
+    7,
+    dateInput("start_date", "Starting Date", "2012-12-31", format = "yyyy-mm-dd")
+  )
+)
+
+fluidRow(
+  column(
+    7,
+    dateInput("end_date", "Ending Date", "2021-07-31", format = "yyyy-mm-dd")
+  )
+)
+
+fluidRow(
+  column(
+    7,
+    selectInput(
+      "rebalance", "Rebalancing Frequency",
+      c(
+        "Annually" = "years",
+        "Monthly" = "months",
+        "Weekly" = "weeks"
+      )
+    )
+  )
+)
+
+fluidRow(
+  column(
+    7,
+    numericInput("window", "Rolling Window (Values from 3 to 36 months)",
+      12,
+      min = 3, max = 36, step = 1
+    )
+  )
+)
+
+fluidRow(
+  column(
+    7,
+    numericInput("rfr", "Risk Free Rate (%) (Values from 0.1% to 5%)", 0.5,
+      min = 0.1, max = 5, step = 0.1
+    )
+  )
+)
+
+fluidRow(
+  column(
+    10,
+    numericInput("mar", "Minimally Acceptable Monthly Return (%) (Values from 0.1% to 5%)", 1,
+      min = 0.1, max = 5, step = 0.1
+    )
+  )
+)
+
+fluidRow(
+  column(
+    12,
+    selectInput(
+      "bench_mark", "Benchmark ETF",
+      c(
+        "SPDR S&P 500 ETF Trust" = "SPY",
+        "Invesco QQQ ETF Trust" = "QQQ",
+        "SPDR Dow Jones Industrial Average ETF Trust" = "DIA",
+        "Vanguard Growth Index Fund ETF" = "VUG"
+      )
+    )
+  )
+)
+tags$a(
+  href = "#section-mytab",
+  actionButton("go", "Submit")
+)
+```
+
+```{r}
+# Portfolio returns
+portfolio_calculations <- eventReactive(input$go, {
+
+  # Ticker symbols
+  symbols <- c(
+    input$stock1, input$stock2, input$stock3, input$stock4, input$stock5,
+    input$stock6, input$stock7, input$stock8, input$stock9, input$stock10
+  )
+
+  ################################################################################
+
+  # Check to see if weights sum up to 100 percent
+  shiny::validate(
+    shiny::need(
+      expr = input$w1 + input$w2 + input$w3 + input$w4 + input$w5 +
+        input$w6 + input$w7 + input$w8 + input$w9 + input$w10 == 100,
+      message = "Please ensure that portfolio weights sum to 100$"
+    )
+  )
+
+  # Vector of weights
+  w <- c(
+    input$w1 / 100, input$w2 / 100, input$w3 / 100, input$w4 / 100, input$w5 / 100,
+    input$w6 / 100, input$w7 / 100, input$w8 / 100, input$w9 / 100, input$w10 / 100
+  )
+
+  ################################################################################
+
+  # Load data-- input date to today-- from Yahoo finance
+  prices <- quantmod::getSymbols(
+    Symbols = symbols,
+    src = "yahoo",
+    from = input$start_date,
+    to = input$end_date,
+    auto.assign = TRUE,
+    warnings = FALSE
+  ) %>%
+    # The map function takes an anonymous function and will return a list
+    # The function Ad() extracts the adjusted closing prices
+    purrr::map(.f = ~ quantmod::Ad(get(x = .x))) %>%
+    # Use reduce() to merge the elements of .x consecutively
+    purrr::reduce(.f = base::merge) %>%
+    # Use a replacement function to set column names as ticker symbols
+    # This function is in prefix form
+    # It is equivalent to colnames(x = prices) <- value
+    `colnames<-`(value = symbols)
+
+  ################################################################################
+
+  # Asset returns long
+  asset_returns_long <- xts::to.monthly(
+    x = prices,
+    drop.time = TRUE,
+    indexAt = "lastof",
+    OHLC = FALSE
+  ) %>%
+    # Create a new "date" variable by extracting the date indices from the xts object
+    base::data.frame("date" = zoo::index(x = .)) %>%
+    # Coerce to tibble
+    dplyr::as_tibble() %>%
+    # Create a key column "asset" that contains the column names, i.e. ticker symbols
+    # Create a value column that contains all the cells associated with each column
+    # We convert to long format since it is easier to compute the returns using lag()
+    tidyr::pivot_longer(
+      cols = 1:10,
+      names_to = "asset",
+      values_to = "returns"
+    ) %>%
+    # Group by ticker symbol
+    dplyr::group_by(asset) %>%
+    # Compute simple returns manually
+    dplyr::mutate(
+      "returns" = (
+        (returns - dplyr::lag(x = returns)) / (dplyr::lag(x = returns))
+      )
+    ) %>%
+    # Remove NA_double_ readings
+    na.omit()
+
+  ################################################################################
+
+  # Object 1 Monthly portfolio returns
+  portfolio_returns_tq_rebalanced <- asset_returns_long %>%
+    tidyquant::tq_portfolio(
+      assets_col = asset,
+      returns_col = returns,
+      weights = w,
+      col_rename = "Monthly_portfolio_returns",
+      rebalance_on = input$rebalance
+    ) %>%
+    # Convert to percent
+    purrr::modify_if(.p = is.numeric, .f = ~ round(x = .x, digits = 6) * 100) %>%
+    # Create a factor that will be used to color code scatter plot later
+    mutate(
+      "dist_from_mean" = forcats::as_factor(
+        case_when(
+          between(
+            x = Monthly_portfolio_returns,
+            left = (mean(Monthly_portfolio_returns) - sd(Monthly_portfolio_returns)),
+            right = (mean(Monthly_portfolio_returns) + sd(Monthly_portfolio_returns))
+          ) ~ "TRUE",
+          TRUE ~ "FALSE"
+        )
+      )
+    )
+
+  ################################################################################
+
+  # Object 2 Tolerance band for scatter plot
+  lb <- (mean(portfolio_returns_tq_rebalanced[["Monthly_portfolio_returns"]])
+  - sd(portfolio_returns_tq_rebalanced[["Monthly_portfolio_returns"]]))
+  ub <- (mean(portfolio_returns_tq_rebalanced[["Monthly_portfolio_returns"]])
+  + sd(portfolio_returns_tq_rebalanced[["Monthly_portfolio_returns"]]))
+
+  ################################################################################
+
+  # Object 3 Long format table
+  long_format <- asset_returns_long %>%
+    # Group by ticker symbols
+    dplyr::group_by(asset) %>%
+    # Compute expected returns and standard deviations for each ETF
+    # This would return a tibble with 10 rows, one for each ETF
+    dplyr::summarize(
+      standard_deviation = sd(returns) * 100,
+      expected_return = mean(returns) * 100,
+      skewness = PerformanceAnalytics::skewness(returns),
+      kurtosis = PerformanceAnalytics::kurtosis(returns)
+    ) %>%
+    # Add a row to the tibble above that contains mean and sd for the entire portfolio
+    tibble::add_row(
+      expected_return = mean(
+        portfolio_returns_tq_rebalanced[["Monthly_portfolio_returns"]]
+      ),
+      standard_deviation = sd(
+        portfolio_returns_tq_rebalanced[["Monthly_portfolio_returns"]]
+      ),
+      skewness = PerformanceAnalytics::skewness(
+        portfolio_returns_tq_rebalanced[["Monthly_portfolio_returns"]]
+      ),
+      kurtosis = PerformanceAnalytics::kurtosis(
+        portfolio_returns_tq_rebalanced[["Monthly_portfolio_returns"]]
+      ),
+      asset = "Portfolio"
+    )
+
+  ################################################################################
+
+  # Object 4 stock market events flag data
+  data_flag <- tibble(
+    date = c(
+      lubridate::as_date("2015-08-31"),
+      lubridate::as_date("2020-02-29"),
+      lubridate::as_date("2020-03-31")
+    ),
+    title = c("15-16 Market Selloff", "Market Crash", "Largest Point Drop"),
+    text = c(
+      "A steep selloff began on August 21, 2015, when the DJIA fell
+      531 points, lasting until 2016",
+      "The 2020 stock market crash began on Februrary 20, 2020, which ended in April",
+      "The largest point drop in history yet occurred on March 16, 2020
+             when the Dow dropped 2,997 points"
+    )
+  )
+
+  ################################################################################
+
+  # Object 5-14 benchmark performance ratios
+  # Market monthly returns
+  market_monthly_returns <- asset_returns_long %>%
+    dplyr::filter(asset == input$bench_mark) %>%
+    dplyr::ungroup() %>%
+    dplyr::select(-asset) %>%
+    timetk::tk_xts(date_var = date) %>%
+    round(digits = 6) * 100
+
+  # Market Sharpe Ratio
+  market_sharpe <- PerformanceAnalytics::SharpeRatio(
+    R = market_monthly_returns,
+    Rf = input$rfr,
+    # Function that substitutes the VaR as the measure of risk instead of standard deviation
+    FUN = "VaR",
+    # This argument is passed to the VaR() function and uses Monte Carlo simulation
+    method = "modified"
+  )
+
+  # Market rolling Sharpe Ratio
+  market_rolling_sharpe <- zoo::rollapply(
+    data = market_monthly_returns,
+    width = input$window,
+    FUN = function(x) {
+      PerformanceAnalytics::SharpeRatio(x,
+        Rf = input$rfr,
+        # Function that substitutes the VaR as the measure of risk instead of standard deviation
+        FUN = "VaR",
+        # This argument is passed to the VaR() function and uses Monte Carlo simulation
+        method = "modified"
+      )
+    }
+  ) %>%
+    na.omit()
+
+  # Market rolling Sortino Ratio
+  # The ratio uses the DownsideDeviation()
+  # To calculate it, take the subset of returns that are less than the MAR returns
+  # Take the differences of these returns to the MAR
+  # Sum the squares and divide by the total number of returns for the semi-variance
+  market_rolling_sortino <- zoo::rollapply(
+    data = market_monthly_returns,
+    width = input$window,
+    FUN = function(x) {
+      PerformanceAnalytics::SortinoRatio(x,
+        MAR = input$mar,
+        threshold = "MAR"
+      )
+    }
+  ) %>%
+    na.omit()
+  # Assign NA to infinite values
+  # The chart will have a discontinuity at that point
+  market_rolling_sortino[which(x = is.infinite(market_rolling_sortino))] <- NA_real_
+
+  ################################################################################
+
+  # Portfolio monthly returns in xts
+  portfolio_monthly_returns_xts <- portfolio_returns_tq_rebalanced %>%
+    timetk::tk_xts(date_var = date)
+
+  # Portfolio Sharpe Ratio
+  portfolio_sharpe <- PerformanceAnalytics::SharpeRatio(
+    R = portfolio_monthly_returns_xts,
+    Rf = input$rfr,
+    # Function that substitutes the VaR as the measure of risk instead of standard deviation
+    FUN = "VaR",
+    # This argument is passed to the VaR() function and uses Monte Carlo simulation
+    method = "modified"
+  )
+
+  # Portfolio Information Ratio
+  # Work in decimals since the function returns NaN when applying percentages
+  # The ratio is computed using two functions ActivePremium() / TrackingError()
+  information_ratio <- PerformanceAnalytics::InformationRatio(
+    Ra = portfolio_monthly_returns_xts / 100,
+    Rb = market_monthly_returns / 100,
+    scale = 12
+  )
+
+  # Portfolio Sortino Ratio
+  sortino_ratio <- PerformanceAnalytics::SortinoRatio(
+    R = portfolio_monthly_returns_xts,
+    MAR = input$mar,
+    threshold = "MAR"
+  )
+
+  ################################################################################
+
+  # Portfolio rolling Sharpe Ratio
+  portfolio_rolling_sharpe <- zoo::rollapply(
+    data = portfolio_monthly_returns_xts,
+    width = input$window,
+    FUN = function(x) {
+      PerformanceAnalytics::SharpeRatio(x,
+        Rf = input$rfr,
+        # Function that substitutes the VaR as the measure of risk instead of standard deviation
+        FUN = "VaR",
+        # This argument is passed to the VaR() function and uses Monte Carlo simulation
+        method = "modified"
+      )
+    }
+  ) %>%
+    na.omit()
+
+  # Portfolio rolling Information Ratio
+  portfolio_rolling_info <- zoo::rollapply(
+    data = portfolio_monthly_returns_xts / 100,
+    width = input$window,
+    FUN = function(x) {
+      PerformanceAnalytics::InformationRatio(x,
+        Rb = market_monthly_returns / 100,
+        scale = 12
+      )
+    }
+  ) %>%
+    na.omit()
+
+  # Portfolio rolling Sortino Ratio
+  portfolio_rolling_sortino <- zoo::rollapply(
+    data = portfolio_monthly_returns_xts,
+    width = input$window,
+    FUN = function(x) {
+      PerformanceAnalytics::SortinoRatio(x,
+        MAR = input$mar,
+        threshold = "MAR"
+      )
+    }
+  ) %>%
+    na.omit()
+  # Assign NA to infinite values
+  # The chart will have a discontinuity at that point
+  portfolio_rolling_sortino[which(x = is.infinite(portfolio_rolling_sortino))] <- NA_real_
+
+  ################################################################################
+
+  # Object 15 Compute overall percentage contribution to portfolio standard deviation for each asset
+  asset_PCTSD <- xts::to.monthly(
+    x = prices,
+    drop.time = TRUE,
+    indexAt = "lastof",
+    OHLC = FALSE
+  ) %>%
+    PerformanceAnalytics::Return.calculate(method = "discrete") %>%
+    stats::na.omit() %>%
+    # Compute marginal contribution to risk
+    PerformanceAnalytics::StdDev(
+      R = .,
+      portfolio_method = "component",
+      weights = w
+    ) %>%
+    # Extract form the returned list object of 3 the named vector with percentages
+    purrr::pluck(c("pct_contrib_StdDev")) %>%
+    # Enframe to coerce the named vector to a tibble
+    tibble::enframe(name = "asset", value = "Percentage Contribution To SD") %>%
+    # Create a new column of weights to be used for plotting later
+    dplyr::mutate("Weight" = w) %>%
+    # Pivot longer so that we can plot the percentages by group--- PCTSD and Weight
+    # This tibble has asset (ticker symbols), type (PCTSD or Weight), and percentages (3 cols)
+    tidyr::pivot_longer(
+      cols = c("Percentage Contribution To SD", "Weight"),
+      names_to = "Type",
+      values_to = "Percentage"
+    ) 
+
+  ###############################################################################
+
+  # Object 16 rolling PCTSD
+  # A function to compute PCTSD given a data set, which is a wrapper for StdDev()
+  # This function will be nested in the next function, which uses this function to compute PCTSD
+  PCTSD_function <- function(asset_tibble, weights) {
+
+    # This input will be a tibble
+    asset_tibble %>%
+      # Convert tibble to xts since the StdDev() function works best with xts objects
+      timetk::tk_xts(date_var = date) %>%
+      # Compute marginal contribution to risk
+      PerformanceAnalytics::StdDev(
+        R = .,
+        portfolio_method = "component",
+        weights = weights
+      ) %>%
+      # Extract form the returned list object of 3 the named vector with ratios
+      purrr::pluck(c("pct_contrib_StdDev")) %>%
+      # Enframe to coerce the named vector to a tibble
+      tibble::enframe(name = "asset", value = "Percentage Contribution To Standard Deviation")
+  }
+
+  # A wrapper function that uses PCTSD_function() on subsets of monthly returns
+  # The order of the argument is so that we can iterate the first argument using map()
+  rolling_PCTSD <- function(start_index, asset_returns, window, weights) {
+
+    # Subset the start_index element of the date column from the asset returns data
+    # We will use the map function to iterate this index 1 step size at a time
+    # This index functions as the start of the window that keeps shifting until map finishes
+
+
+    # The end date will depend on the start date and the length of the window
+    # E.g. if start is "2013-01-31" and window is 3, then "2013-04-30" will be the end date
+    # If start is "2013-01-31" and window is 36, then ""2016-01-31" will be the end date
+
+
+    # We need a subset of monthly returns that fit into the user specified window period
+    asset_returns %>%
+      # Keep rows where date >= start date (inclusive) and < end date (not inclusive)
+      # If we include the end date row, we would be adding one extra month in our subset
+      # We also keep the date column since the PCTSD_function() will need to to coerce to xts
+      dplyr::filter(
+        .data = .,
+        date >= asset_returns[["date"]][[start_index]] &
+          date < asset_returns[["date"]][[start_index + window]]
+      ) %>%
+      # Compute the PCTSD based on data in this subset
+      # Return a tibble with two columns, asset & PCTSD, plus 10 rows with ratios
+      PCTSD_function(asset_tibble = ., weights = weights) %>%
+      # Stats computed using this subset will be attributed to the ending month of the window
+      # That is, the results are the PCTSD over the preceding number of months of each asset
+      dplyr::mutate(
+        .data = .,
+        date = ymd(asset_returns[["date"]][[start_index + window]])
+      ) %>%
+      # The tibble is in long format so we need to widen it with 2 columns and 10 rows
+      # We need a date column, then one column for each asset and 1 row of ratios
+      tidyr::pivot_wider(
+        data = .,
+        names_from = "asset",
+        values_from = "Percentage Contribution To Standard Deviation"
+      ) %>%
+      # Convert ratios to percentages
+      purrr::modify_if(.p = is.numeric, .f = ~ round(x = .x, digits = 6) * 100)
+  }
+
+  # Create a tibble that contains rolling data to be used for plotting later
+  asset_returns_wide <- asset_returns_long %>%
+    # We need the tibble to be in wide format to compute rolling PCTSD
+    tidyr::pivot_wider(names_from = "asset", values_from = "returns")
+
+
+  # Map the PCTSD_function() by iterating the start_index argument
+  # Ensure that map() stops at the date that is "input$window" months before the last date
+  portfolio_rolling_PCTSD <- purrr::map_df(
+    .x = 1:(nrow(asset_returns_wide) - input$window),
+    .f = rolling_PCTSD,
+    # Constant arguments that do not get iterated
+    asset_returns = asset_returns_wide,
+    window = input$window,
+    weights = w
+  )
+
+  ###############################################################################
+
+  # Object 17 Cornish-Fisher VaR
+  # Compute Cornish-Fisher VaR
+  cf_VaR <- as.double(
+    round(
+      PerformanceAnalytics::VaR(
+        # Must be xts object
+        R = portfolio_monthly_returns_xts / 100,
+        # Use the Cornish-Fisher method
+        method = "modified",
+        # Compute the single component
+        portfolio_method = "single",
+        invert = TRUE
+      ) * 100,
+      digits = 4
+    )
+  )
+
+  # Object 18 Cornish-Fisher VaR component contribution
+  asset_PCTVaR <- xts::to.monthly(
+    x = prices,
+    drop.time = TRUE,
+    indexAt = "lastof",
+    OHLC = FALSE
+  ) %>%
+    PerformanceAnalytics::Return.calculate(method = "discrete") %>%
+    stats::na.omit() %>%
+    # Compute marginal contribution to risk
+    # This returns a list of three: MVaR, contribution, and pct_contrib_MVaR
+    # The first one is the univariate portfolio VaR,
+    # Next, the scalar contribution of each component to the portfolio VaR (sum to the portfolio VaR)
+    # Lastly, a percentage risk contribution (which will sum to 100%)
+    PerformanceAnalytics::VaR(
+      R = .,
+      method = "modified",
+      portfolio_method = "component",
+      # We need the weight vector for computing the component contribution
+      weights = w
+    ) %>%
+    # Extract form the returned list object of 3 the named vector with percentages
+    purrr::pluck(c("pct_contrib_MVaR")) %>%
+    # Enframe to coerce the named vector to a tibble
+    tibble::enframe(name = "asset", value = "Percentage Contribution To VaR") %>%
+    # Create a new column of weights to be used for plotting later
+    dplyr::mutate("Weight" = w) %>%
+    # Pivot longer so that we can plot the percentages by group--- cfVar contribution and Weight
+    # This tibble has asset (ticker symbols), type (PCTSD or Weight), and percentages (3 cols)
+    tidyr::pivot_longer(
+      cols = c("Percentage Contribution To VaR", "Weight"),
+      names_to = "Type",
+      values_to = "Percentage"
+    )
+
+  ###############################################################################
+
+  # We may need this function to be able to return more than one objects
+  # So, when we call the reactive function, we can sub-set elements from the list
+  # Tibble stored as element one
+  # Tolerance band stored as element two
+  # Long table stored as element three
+  # So on and so forth
+  list(
+    "returns" = portfolio_returns_tq_rebalanced,
+    "tolerance" = c(lb, ub),
+    "long_table" = long_format,
+    "flags" = data_flag,
+    "market_sharpe" = market_sharpe,
+    "market_rolling_sharpe" = market_rolling_sharpe,
+    "market_rolling_sortino" = market_rolling_sortino,
+    "port_sharpe" = portfolio_sharpe,
+    "info_ratio" = information_ratio,
+    "sortino_ratio" = sortino_ratio,
+    "port_rolling_sharpe" = portfolio_rolling_sharpe,
+    "port_rolling_info" = portfolio_rolling_info,
+    "port_rolling_sortino" = portfolio_rolling_sortino,
+    "port_monthly_returns_xts" = portfolio_monthly_returns_xts,
+    "Percentage Contribution To Standard Deviation" = asset_PCTSD,
+    "port_rolling_PCTSD" = portfolio_rolling_PCTSD,
+    "cf_VaR" = cf_VaR,
+    "Percentage Contribution To VaR" = asset_PCTVaR
+  )
+})
+```
+
+```{r}
+portfolio_rolling_stats <- eventReactive(input$go, {
+
+  # Rolling expected monthly returns
+  # Apply rolling function in tidayquant
+  portfolio_rolling_exp_returns_tq <- portfolio_calculations()[["returns"]] %>%
+    # Keep only date and returns
+    dplyr::select(date, Monthly_portfolio_returns) %>%
+    tidyquant::tq_mutate(
+      mutate_fun = rollapply,
+      width = input$window,
+      # Scope this function by "name"
+      # The mean function
+      FUN = mean,
+      col_rename = "Rolling_exp_returns"
+    ) %>%
+    # Keep only the date and Rolling_exp_returns column
+    dplyr::select(date, Rolling_exp_returns) %>%
+    # Remove NA_real_
+    # Depending on the window period, some months may not have values
+    na.omit()
+
+  ################################################################################
+
+  # Rolling volatility
+  # Apply rolling function in tidayquant
+  portfolio_rolling_sd_tq <- portfolio_calculations()[["returns"]] %>%
+    # Keep only date and returns
+    dplyr::select(date, Monthly_portfolio_returns) %>%
+    tidyquant::tq_mutate(
+      mutate_fun = rollapply,
+      width = input$window,
+      # Scope this function by "name"
+      FUN = sd,
+      col_rename = "Rolling_sd"
+    ) %>%
+    # Keep only the date and Rolling_sd column
+    dplyr::select(date, Rolling_sd) %>%
+    # Remove NA_real_
+    # Depending on the window period, some months may not have values
+    na.omit()
+
+  ################################################################################
+
+  # Rolling skewness
+  # Apply rolling function in tidayquant
+  portfolio_rolling_skewness_tq <- portfolio_calculations()[["returns"]] %>%
+    # Keep only date and returns
+    dplyr::select(date, Monthly_portfolio_returns) %>%
+    tidyquant::tq_mutate(
+      mutate_fun = rollapply,
+      width = input$window,
+      # Scope this function by "name"
+      # The skewness function form the PerformanceAnalytics package
+      FUN = skewness,
+      col_rename = "Rolling_skew"
+    ) %>%
+    # Keep only the date and Rolling_skew column
+    dplyr::select(date, Rolling_skew) %>%
+    # Remove NA_real_
+    # Depending on the window period, some months may not have values
+    na.omit()
+
+  ################################################################################
+
+  # Rolling kurtosis
+  # Apply rolling function in tidayquant
+  portfolio_rolling_kurtosis_tq <- portfolio_calculations()[["returns"]] %>%
+    # Keep only date and returns
+    dplyr::select(date, Monthly_portfolio_returns) %>%
+    tidyquant::tq_mutate(
+      mutate_fun = rollapply,
+      width = input$window,
+      # Scope this function by "name"
+      # The kurtosis function form the PerformanceAnalytics package
+      FUN = kurtosis,
+      col_rename = "Rolling_kurt"
+    ) %>%
+    # Keep only the date and Rolling_skew column
+    dplyr::select(date, Rolling_kurt) %>%
+    # Remove NA_real_
+    # Depending on the window period, some months may not have values
+    na.omit()
+
+  ################################################################################
+
+  list(
+    "exp_return" = portfolio_rolling_exp_returns_tq,
+    "sd" = portfolio_rolling_sd_tq,
+    "skew" = portfolio_rolling_skewness_tq,
+    "kurt" = portfolio_rolling_kurtosis_tq
+  )
+})
+```
+
+Returns
+=====================================  
+
+Row {.tabset .tabset-fade}
+-------------------------------------
+
+### Definitions
+
+**Introduction**
+
+Welcome! This is an interactive portfolio dashboard based on historical data from Yahoo Finance. Please select the following items--- 10 portfolio assets (by ticker symbols), 10 asset weights, a rebalancing frequency, an overlapping rolling window for computing statistics, a risk free rate (monthly periodicity), a Benchmark ETF and a minimally acceptable monthly return for computing performance metrics, a start and an end date--- then, click the submit button to proceed. Alternatively, click submit to proceed with default values.
+
+**Portfolio Returns**
+
+A portfolio comprising $\mathrm{N}$ assets $A_{1}, A_{2}, \ldots A_{N}$ with $W_{1}, W_{2}, \ldots W_{N}$ as their individual weights and $r_{1}, r_{2}, \ldots r_{N}$ as their individual returns, respectively, has its return given by:
+
+\begin{align}\label{Portfolio returns}
+r&=W_{1} \cdot r_{1}+W_{2} \cdot r_{2}+\ldots W_{N} \cdot r_{N} \\
+&=\sum_{i=1}^{N} W_{i} \cdot r_{i}
+\end{align}
+
+For this dashboard, simple (discrete) monthly returns are used rather than log returns (i.e. the continuously compounded rate of return). Log returns, while certainly being time-additive, are not asset-additive. The weighted sum of the log returns of individual assets is not equal to the portfolio return since log returns are not a linear function of asset weights. One of the advantages of simple return is that it can be used where portfolios are to be formed.
+
+**Expected Return and Standard Deviation of Returns**
+
+Harry Markowitz proposed a mathematical framework known as the Modern Portfolio Theory (MPT) or the Mean-Variance Analysis that won him the 1990 Nobel Prize in Economics. The prime assumption of the framework is that the investors search for higher return (yield) under a constraint of risk, or alternatively, search for the lowest level of risk that will allow them to get a certain level of return. The return is the capital gain that can be expected from holding the portfolio and the risk is defined here as the extent of the capital losses that the portfolio can potentially suffer. In the original formulation, and in most cases after that, return and risk are identified by the mean and variance of the portfolio's periodic fluctuations respectively.
+
+**Rolling Window Analysis**
+
+To overcome the problem of financial data inadequacy, the so-called rolling window method can be employed with the aim of constructing “new” observations using samples of consecutive existing observations. The use of an overlapping rolling window has the advantage of generating substantially more data- although with the caveat of introducing dependence between consecutive aggregated observations. For a series of data and a fixed window size, the rolling window observations are obtained by shifting a pre-specified window forward over the data set one observation at a time. For a time series with certain periodicity and $n$ observations. A rolling window with size, say $t \le n$, will contain $t$ number of observations within each window. The overlapping window method can produce substantially more observations compared the non-overlapping window. These new observations can be used in estimations of statistical parameters and risk measures. **Note: The size of the rolling window cannot be greater than the specified period, i.e. rolling window $\le$ (start date - end date).**
+
+### Histogram and Density {#mytab}
+
+```{r}
+# A function that computes the number of bins using Freedman-Diaconis rule
+bins_fd <- function(vec) {
+  diff(range(vec)) / (2 * IQR(vec) / length(vec)^(1 / 3))
+}
+# A function for computing max and median estimated density
+# The max value is used to position text above the distribution
+# The median density is used to position text in the middle
+max_density <- function(data) {
+  density <- density(x = data)
+  max <- max(density[["y"]]) * 1.3
+  median <- median(density[["y"]]) * 3
+  list("max" = max, "median" = median)
+}
+# Histogram and Density
+renderPlot({
+  portfolio_calculations()[["returns"]] %>%
+    ggplot(mapping = aes(x = Monthly_portfolio_returns)) +
+    geom_density(
+      color = "cornflowerblue",
+      alpha = 0.5,
+      bw = "ste"
+    ) +
+    geom_histogram(
+      # Ensure that histogram (which are counts) are on the same scale as density function
+      mapping = aes(y = ..density..),
+      alpha = 0.5,
+      bins = bins_fd(portfolio_calculations()[["returns"]][["Monthly_portfolio_returns"]]),
+      fill = "cornflowerblue"
+    ) +
+    ggtitle("Distribution of Portfolio Monthly Returns") +
+    xlab("Portfolio Monthly Returns") +
+    geom_label(
+      mapping = aes(
+        x = mean(portfolio_calculations()[["returns"]][["Monthly_portfolio_returns"]]),
+        # Place text above the curve
+        y = max_density(
+          data = portfolio_calculations()[["returns"]][["Monthly_portfolio_returns"]]
+        )[["max"]],
+        label = paste(
+          "Expected Monthly Return is",
+          round(mean(portfolio_calculations()[["returns"]][["Monthly_portfolio_returns"]]), 4),
+          "percent and Total Standard Deviation is",
+          round(sd(portfolio_calculations()[["returns"]][["Monthly_portfolio_returns"]]), 4),
+          "percent \n based on historical data from",
+          input$start_date,
+          "to",
+          input$end_date
+        )
+      ),
+      color = "black",
+      size = 4, angle = 45, fontface = "bold"
+    ) +
+    theme(
+      panel.background = element_rect(fill = "grey95"),
+      panel.grid = element_blank(),
+    )
+})
+```
+
+---
+
+> **In the visualization above, the Freedman-Diaconis rule is used to select the width of the bins to be used in the histogram; the pilot estimation method as detailed in Sheather & Jones (1991) is employed to estimate the smoothed density curve**. 
+
+### Scatter plot
+
+```{r}
+renderPlot({
+  portfolio_calculations()[["returns"]] %>%
+    ggplot(
+      mapping = aes(x = date, y = Monthly_portfolio_returns, color = dist_from_mean)
+    ) +
+    # Color code the points conditional to distance from the mean
+    geom_point(size = 2, alpha = 0.5) +
+    ggtitle("Portfolio Monthly Returns") +
+    xlab("Date") +
+    ylab("Portfolio Monthly Returns") +
+    # Add percentage symbol to axes
+    # Anonymous function is used
+    scale_y_continuous(labels = ~ paste(.x, "%")) +
+    # Add lower bound
+    # Recall the tolerance band is stored as the second element
+    # The lower bound is the first eleemnt of the vector
+    geom_hline(
+      yintercept = portfolio_calculations()[["tolerance"]][[1]],
+      color = "cornflowerblue",
+      linetype = "dashed"
+    ) +
+    # Add upper bound
+    geom_hline(
+      yintercept = portfolio_calculations()[["tolerance"]][[2]],
+      color = "cornflowerblue",
+      linetype = "dashed"
+    ) +
+    guides(color = guide_legend(title = "Within one sd \n of the mean?")) +
+    scale_color_manual(values = c("red", "cornflowerblue")) +
+    theme(
+      panel.background = element_rect(fill = "grey95"),
+      panel.grid = element_blank(),
+    )
+})
+```
+
+> **A visualization of the dispersion of the monthly returns. When viewing the scatter plot, focus on the manners in which the vertical spread of the data points change over time**.  
+
+### Portifolio Monthly Returns
+
+```{r}
+renderHighchart({
+
+  # Convert tibble to xts first since highchart accepts xts object
+  portfolio_returns_tidyquant <-
+    portfolio_calculations()[["returns"]] %>%
+    dplyr::select(-dist_from_mean) %>%
+    timetk::tk_xts(date_var = date) %>%
+    round(digits = 4)
+
+  # Line chart
+  highchart(type = "stock") %>%
+    # Add chart main title
+    hc_title(text = "Portfolio Monthly Returns") %>%
+    # Remove gridlines
+    hc_xAxis(
+      gridLineWidth = 0
+    ) %>%
+    hc_yAxis(
+      gridLineWidth = 0
+    ) %>%
+    hc_yAxis(
+      title = list(text = "Portfolio Monhtly Returns"),
+      labels = list(format = "{value}%"),
+      opposite = FALSE
+    ) %>%
+    # Add returns series to highchart objects
+    hc_add_series(
+      data = portfolio_calculations()[["port_monthly_returns_xts"]],
+      name = "Portfolio Monthly Returns",
+      color = "cornflowerblue",
+      id = "Monthly Returns"
+    ) %>%
+    # Flags
+    hc_add_series(portfolio_calculations()[["flags"]],
+      hcaes(x = date),
+      type = "flags",
+      onSeries = "Monthly Returns"
+    ) %>%
+    hc_add_theme(hc_theme_flat()) %>%
+    hc_navigator(enabled = TRUE) %>%
+    # Scrollbar
+    hc_scrollbar(enabled = FALSE) %>%
+    # Add legend
+    hc_legend(enabled = FALSE) %>%
+    hc_exporting(enabled = TRUE)
+})
+```
+
+> **A time series of historical monthly returns. Use the date navigator to choose different granularity levels**.
+
+### Rolling Expected Returns
+
+```{r}
+renderHighchart({
+
+  # Convert tibble to xts first since highchart accepts xts object
+  portfolio_rolling_exp_returns_xts <-
+    portfolio_rolling_stats()[["exp_return"]] %>%
+    timetk::tk_xts(date_var = date) %>%
+    round(digits = 4)
+
+  # Line chart
+  highchart(type = "stock") %>%
+    hc_title(text = paste0("Rolling ", input$window, "-Month Expected Returns")) %>%
+    hc_xAxis(
+      gridLineWidth = 0
+    ) %>%
+    hc_yAxis(
+      gridLineWidth = 0
+    ) %>%
+    hc_yAxis(
+      title = list(text = "Expected Returns"),
+      labels = list(format = "{value}%"),
+      opposite = FALSE
+    ) %>%
+    hc_add_series(
+      portfolio_rolling_exp_returns_xts,
+      name = "Portfolio Expected Returns",
+      color = "cornflowerblue",
+      id = "Expected Return"
+    ) %>%
+    hc_add_series(portfolio_calculations()[["flags"]],
+      hcaes(x = date),
+      type = "flags",
+      onSeries = "Expected Return"
+    ) %>%
+    hc_add_theme(hc_theme_flat()) %>%
+    hc_navigator(enabled = TRUE) %>%
+    hc_scrollbar(enabled = FALSE) %>%
+    hc_exporting(enabled = TRUE)
+})
+```
+
+> **Altering the overlapping rolling window will change the visualization's granularity level as well as actual numeric values. Compared to analyzing the overall expected monthly return (and we only have one of such statistic for each sample of data), the rolling window approach may generate more insights on the manner in which expected monthly returns move during specific time periods**.  
+
+Volatility
+=====================================  
+
+Row {.tabset .tabset-fade}
+-------------------------------------
+
+### Definition
+
+**Volatility**
+
+The volatility of a portfolio $\mathrm{P}$ is given by the standard deviation of its returns:
+
+\begin{align*}
+\sigma_{P}=\sqrt{\sum_{i} \sum_{j} W_{i} \cdot W_{j} \cdot \sigma_{i j}}
+\end{align*}
+
+where 
+
+* $\sigma_{i j}$ is the covariance between returns of assets $i$ and $j$. Note: $\sigma_{i j}$ is also referred to as the **variance-covariance matrix** of asset returns. 
+
+In R, the formula is implemented using linear algebra:
+
+\begin{align*}
+\sigma_{P}=\sqrt{\vec{W}^{T}\sum\vec{W}}
+\end{align*}
+
+where 
+
+* $\vec{W}^{T}$ is the row vector $\begin{bmatrix} W_{1} & W_{2} & W_{3} & \ldots\end{bmatrix}$
+
+* $\vec{W}$ is the column vector $\begin{bmatrix} W_{1} \\ W_{2} \\ W_{3} \\ \vdots\end{bmatrix}$
+
+* $\sum$ is the estimator for the **variance-covariance matrix** of asset returns
+
+### Return Versus Volatility 
+
+```{r}
+renderPlot({
+
+  # Long table stored as the third element
+  portfolio_calculations()[["long_table"]] %>%
+    ggplot(mapping = aes(
+      x = standard_deviation,
+      y = expected_return,
+      color = asset
+    )) +
+    geom_point(size = 4) +
+    geom_label(
+      mapping = aes(
+        x =
+          sd(portfolio_calculations()[["returns"]][["Monthly_portfolio_returns"]]),
+        # Scale so that the label is right above the data point
+        y =
+          mean(portfolio_calculations()[["returns"]][["Monthly_portfolio_returns"]]) * 1.1
+      ),
+      label = "Portfolio",
+      label.size = 0.05,
+      show.legend = FALSE
+    ) +
+    xlab("Standard Deviations") +
+    ylab("Expected Monthly Returns") +
+    labs(
+      title =
+        "Expected Monthly Returns v.s. Total Standard Deivation Over the Specified Time Period",
+      subtitle =
+        "Risk and Return: Comparing Portfolio Standard Deivation to Those of Individual Component Assets"
+    ) +
+    guides(color = guide_legend(title = "Asset")) +
+    # Add percentage symbol to axes
+    # Anonymous function is used
+    scale_x_continuous(labels = ~ paste(.x, "%")) +
+    scale_y_continuous(labels = ~ paste(.x, "%")) +
+    theme(
+      panel.background = element_rect(fill = "grey95"),
+      panel.grid = element_blank(),
+    )
+})
+```
+
+> **When viewing the scatter plot, focus on the risk-return tradeoff. How does the portfolio compare with the individual assets in terms of volatility? Returns? A risk-averse investor may forgo some gains in exchange for less volitatily. Is the portfolio sucessful at diversifying risks?**  
+
+### Rolling Volatility
+
+```{r}
+renderHighchart({
+
+  # Convert tibble to xts first since highchart accepts xts object
+  portfolio_rolling_volatility_xts <-
+    portfolio_rolling_stats()[["sd"]] %>%
+    timetk::tk_xts(date_var = date) %>%
+    round(digits = 4)
+
+  # Line chart
+  highchart(type = "stock") %>%
+    hc_title(text = paste0("Rolling ", input$window, "-Month Volatility")) %>%
+    hc_xAxis(
+      gridLineWidth = 0
+    ) %>%
+    hc_yAxis(
+      gridLineWidth = 0
+    ) %>%
+    hc_yAxis(
+      title = list(text = "Volatility"),
+      labels = list(format = "{value}%"),
+      opposite = FALSE
+    ) %>%
+    hc_add_series(
+      portfolio_rolling_volatility_xts,
+      name = "Portfolio Volatility",
+      color = "cornflowerblue",
+      id = "Volatility"
+    ) %>%
+    hc_add_series(portfolio_calculations()[["flags"]],
+      hcaes(x = date),
+      type = "flags",
+      onSeries = "Volatility"
+    ) %>%
+    hc_add_theme(hc_theme_flat()) %>%
+    hc_navigator(enabled = TRUE) %>%
+    hc_scrollbar(enabled = FALSE) %>%
+    hc_exporting(enabled = TRUE)
+})
+```
+
+> **Experiment with different rolling windows and use the navigator to ""zoom" into various time periods**.
+
+Skewness & Kurtosis
+=====================================  
+
+Row {.tabset .tabset-fade}
+-------------------------------------
+
+### Definitions
+
+**Skewness**
+
+\begin{align*}
+\text{Skewness (method of moments estimator)}=\frac{\frac{1}{n} \sum_{i=1}^{n}\left(r_{i}-\bar{r}\right)^{3}}{\left[\frac{1}{n} \sum_{i=1}^{n}\left(r_{i}-\bar{r}\right)^{2}\right]^{3 / 2}}
+\end{align*}
+
+where 
+
+  * $n$ is the number of returns
+  * $\bar{r}$ is the mean of the returns distribution
+  
+**Kurtosis**
+
+\begin{align*}
+\text{Kurtosis (excess)}=\frac{1}{n}\cdot \sum_{i=1}^{n}\left(\frac{r_{i}-\bar{r}}{\sigma_{P}}\right)^{4}-3
+\end{align*}
+
+where 
+
+  * $n$ is the number of returns
+  * $\bar{r}$ is the mean of the returns distribution
+  * $\sigma_{P}$ is the standard deviation of the returns distribution
+  
+Skewness and Kurtosis are statistical measures of the degree of asymmetry and the degree of "tailedness" of the returns distribution, respectively. These measures add to the mean-variance framework in that they provide additional information about the returns distribution. Since the computation of excess kurtosis uses the normal distribution (Kurtosis = 3) as the benchmark, negative excess kurtosis, or **platykurtic**, actually means that fewer returns are in the tails. In other words, the likelihood of huge downside events are lower; however, the opposite is also true--- the likelihood of huge upside gains are lower. 
+
+Skewness could indicate to us that perhaps an order statistic such as the median is a more robust measure of central tendency than the mean. Furthermore, if a returns distribution is positively skewed (longer right-tail), investors could expect numerous small losses and few large returns from an investment. Conversely, a negatively skewed (longer left-tail) distribution implies many small gains but a few large losses on an investment. A normal distribution has a skewness of zero. 
+
+**Modified Value at Risk**
+
+The modified value at risk (MVaR), also known as the Cornish-Fisher VaR, is used when the returns distribution is skewed or kurtotic, which is usually the reality.
+
+\begin{align*}
+-\bar{R}-\sqrt{(} \sigma) \cdot z_{c f}
+\end{align*}
+
+where
+
+* $z_{cf}$ is the Cornish-Fisher asymptotic expansion for the quantile of a non-normal distribution
+
+\begin{align*}
+z_{c f}=z_{c}+\frac{\left(z_{c}^{2}-1\right) S}{6}+\frac{\left(z_{c}^{3}-3 z_{c}\right) K}{24}-\frac{\left(2 z_{c}^{3}-5 z_{c}\right) S^{2}}{36}
+\end{align*}
+
+where
+
+* $S$ is a skewness parameter of the returns
+
+* $K$ is a kurtosis parameter, or rather an excess kurtosis parameter (in excess of 3, which
+corresponds to a normal distribution)
+
+* $z_{c}$ is the c-quantile of the standard normal distribution
+
+The Cornish-Fisher VaR collapses to traditional mean-VaR when returns are normally distributed. Intuitively, the VaR offers a **probabilistic** answer to the questions, "What is the worst-case scenario?" or "How much could the investment lose in a really bad month?"
+
+### Density
+
+```{r}
+renderPlot({
+
+  # Initial density plot object
+  density_plot <- portfolio_calculations()[["returns"]] %>%
+    ggplot(mapping = aes(x = Monthly_portfolio_returns)) +
+    stat_density(
+      geom = "line",
+      color = "cornflowerblue",
+      alpha = 0.5
+    )
+
+  # Shaded area data
+  # The function ggplot_build returns a list containing all information about the plot
+  # Extract the "data" element, [[1]] ensure that the returned object is a data frame
+  # Filter the rows based on returns (< than the mean return)
+  # The return values are named "x" in this data frame
+  shaded_area_data <- ggplot_build(density_plot)[["data"]][[1]] %>%
+    dplyr::filter(x <
+      mean(portfolio_calculations()[["returns"]][["Monthly_portfolio_returns"]]))
+
+  # Median line data
+  median_line_data <- ggplot_build(density_plot)[["data"]][[1]] %>%
+    dplyr::filter(x <
+      median(portfolio_calculations()[["returns"]][["Monthly_portfolio_returns"]]))
+
+  # Add other aesthetics to the plot
+  density_plot +
+    ggtitle("Kernel Density of Portfolio Monthly Returns",
+      subtitle =
+        "A portfolio with skewness and kurtosis closer to zero has approximately normally distributed returns"
+    ) +
+    xlab("Portfolio Monthly Returns") +
+    ylab("Estimated Kernel Density") +
+    geom_label(
+      mapping = aes(
+        x = mean(portfolio_calculations()[["returns"]][["Monthly_portfolio_returns"]]),
+        y = max_density(
+          data = portfolio_calculations()[["returns"]][["Monthly_portfolio_returns"]]
+        )[["max"]],
+        label = paste(
+          "Overall Portfolio Skewness is",
+          round(PerformanceAnalytics::skewness(
+            portfolio_calculations()[["returns"]][["Monthly_portfolio_returns"]]
+          ), 4),
+          ", Overall Portfolio Kurtosis is",
+          round(PerformanceAnalytics::kurtosis(
+            portfolio_calculations()[["returns"]][["Monthly_portfolio_returns"]]
+          ), 4),
+          "\n and Overall Portfolio VaR is",
+          portfolio_calculations()[["cf_VaR"]],
+          "percent based on historical data from",
+          input$start_date,
+          "to",
+          input$end_date
+        )
+      ),
+      color = "black",
+      size = 4, angle = 45, fontface = "bold"
+    ) +
+    # Add shaded area to emphasize skewness (i.e. downside risk)
+    geom_area(
+      data = shaded_area_data,
+      mapping = aes(x = x, y = y),
+      fill = "cornflowerblue",
+      alpha = 0.5
+    ) +
+    # Add mean line
+    # The function geom_segment() draws a line between points (x, y) & (xend, yend)
+    geom_segment(
+      data = shaded_area_data,
+      mapping = aes(
+        x = mean(portfolio_calculations()[["returns"]][["Monthly_portfolio_returns"]]),
+        y = 0,
+        xend = mean(portfolio_calculations()[["returns"]][["Monthly_portfolio_returns"]]),
+        yend = density
+      ),
+      color = "cornflowerblue",
+      linetype = "dashed"
+    ) +
+    # Add median line
+    geom_segment(
+      data = median_line_data,
+      mapping = aes(
+        x = median(portfolio_calculations()[["returns"]][["Monthly_portfolio_returns"]]),
+        y = 0,
+        xend =
+          median(portfolio_calculations()[["returns"]][["Monthly_portfolio_returns"]]),
+        yend = density
+      ),
+      color = "red",
+      linetype = "dashed"
+    ) +
+    # Add text "mean"
+    geom_label(
+      mapping = aes(
+        # Shrink the values so that the text appears slightly to the left of the mean
+        x = mean(portfolio_calculations()[["returns"]][["Monthly_portfolio_returns"]]) * 0.5,
+        y = max_density(
+          data = portfolio_calculations()[["returns"]][["Monthly_portfolio_returns"]]
+        )[["median"]]
+      ),
+      label = "Mean",
+      color = "black",
+      size = 4, angle = 45, fontface = "bold"
+    ) +
+    # Add text "median"
+    geom_label(
+      mapping = aes(
+        # Scale the value so that the text appears slightly to the right of the median
+        x =
+          median(portfolio_calculations()[["returns"]][["Monthly_portfolio_returns"]]) * 3,
+        y = max_density(
+          data = portfolio_calculations()[["returns"]][["Monthly_portfolio_returns"]]
+        )[["median"]]
+      ),
+      label = paste(
+        "Median Return is",
+        median(portfolio_calculations()[["returns"]][["Monthly_portfolio_returns"]]),
+        "percent"
+      ),
+      color = "black",
+      size = 4, angle = 45, fontface = "bold"
+    ) +
+    theme(
+      panel.background = element_rect(fill = "grey95"),
+      panel.grid = element_blank(),
+    )
+})
+```
+
+> **The modified VaR is interpreted as saying that, with 95% confidence, we expect that our worst monthly portfolio return will not exceed the value of the VaR. In other words, if we invest $100, we are 95% confident that our worst monthly loss will not exceed ($100 x -VaR%) dollars. Note that this is a probabilistic estimate based on the distribution of monthly returns and must not be taken with 100% certainty**.
+
+### Return Versus Skewness
+
+```{r}
+renderPlot({
+
+  # Long table stored as the third element
+  portfolio_calculations()[["long_table"]] %>%
+    ggplot(mapping = aes(
+      x = skewness,
+      y = expected_return,
+      color = asset
+    )) +
+    geom_point(size = 4) +
+    geom_label(
+      mapping = aes(
+        x =
+          PerformanceAnalytics::skewness(
+            portfolio_calculations()[["returns"]][["Monthly_portfolio_returns"]]
+          ),
+        # Scale so that the label is right above the data point
+        y =
+          mean(portfolio_calculations()[["returns"]][["Monthly_portfolio_returns"]]) * 1.1
+      ),
+      label = "Portfolio",
+      label.size = 0.05,
+      show.legend = FALSE
+    ) +
+    xlab("Skewness") +
+    ylab("Expected Monthly Returns") +
+    labs(
+      title =
+        "Expected Monthly Returns v.s. Total Skewness Over the Specified Time Period",
+      subtitle =
+        "Risk and Return: Comparing Portfolio Skewness to Those of Individual Component Assets"
+    ) +
+    guides(color = guide_legend(title = "Asset")) +
+    # Add percentage symbol to y axis
+    # Anonymous function is used
+    scale_y_continuous(labels = ~ paste(.x, "%")) +
+    theme(
+      panel.background = element_rect(fill = "grey95"),
+      panel.grid = element_blank(),
+    )
+})
+```
+
+> **When viewing the plot, focus on the bivariate relationship between returns and skewness. A risk averse investor may prefer for positive skewness. How does the portfolio compare with its component assets?**
+
+### Return Versus Kurtosis
+
+```{r}
+renderPlot({
+
+  # Long table stored as the third element
+  portfolio_calculations()[["long_table"]] %>%
+    ggplot(mapping = aes(
+      x = kurtosis,
+      y = expected_return,
+      color = asset
+    )) +
+    geom_point(size = 4) +
+    geom_label(
+      mapping = aes(
+        x =
+          PerformanceAnalytics::kurtosis(
+            portfolio_calculations()[["returns"]][["Monthly_portfolio_returns"]]
+          ),
+        # Scale so that the label is right above the data point
+        y =
+          mean(portfolio_calculations()[["returns"]][["Monthly_portfolio_returns"]]) * 1.1
+      ),
+      label = "Portfolio",
+      label.size = 0.05,
+      show.legend = FALSE
+    ) +
+    xlab("Kurtosis") +
+    ylab("Expected Monthly Returns") +
+    labs(
+      title =
+        "Expected Monthly Returns v.s. Total Kurtosis Over the Specified Time Period",
+      subtitle =
+        "Risk and Return: Comparing Portfolio Kurtosis to Those of Individual Component Assets"
+    ) +
+    guides(color = guide_legend(title = "Asset")) +
+    # Add percentage symbol to y axis
+    # Anonymous function is used
+    scale_y_continuous(labels = ~ paste(.x, "%")) +
+    theme(
+      panel.background = element_rect(fill = "grey95"),
+      panel.grid = element_blank(),
+    )
+})
+```
+
+> **Which component assets appears to have positive excess kurtosis? Negative?**  
+
+### Rolling Skewness
+
+```{r}
+renderHighchart({
+
+  # Convert tibble to xts first since highchart accepts xts object
+  portfolio_rolling_skewness_xts <-
+    portfolio_rolling_stats()[["skew"]] %>%
+    timetk::tk_xts(date_var = date) %>%
+    round(digits = 4)
+
+  # Line chart
+  highchart(type = "stock") %>%
+    hc_title(text = paste0("Rolling ", input$window, "-Month Skewness")) %>%
+    hc_xAxis(
+      gridLineWidth = 0
+    ) %>%
+    hc_yAxis(
+      gridLineWidth = 0
+    ) %>%
+    hc_yAxis(
+      title = list(text = "Skewness"),
+      opposite = FALSE
+    ) %>%
+    hc_add_series(
+      portfolio_rolling_skewness_xts,
+      name = "Portfolio Skewness",
+      color = "cornflowerblue",
+      id = "Skewness"
+    ) %>%
+    hc_add_series(portfolio_calculations()[["flags"]],
+      hcaes(x = date),
+      type = "flags",
+      onSeries = "Skewness"
+    ) %>%
+    hc_add_theme(hc_theme_flat()) %>%
+    hc_navigator(enabled = TRUE) %>%
+    hc_scrollbar(enabled = FALSE) %>%
+    hc_exporting(enabled = TRUE)
+})
+```
+
+### Rolling Kurtosis
+
+```{r}
+renderHighchart({
+
+  # Convert tibble to xts first since highchart accepts xts object
+  portfolio_rolling_kurtosis_xts <-
+    portfolio_rolling_stats()[["kurt"]] %>%
+    timetk::tk_xts(date_var = date) %>%
+    round(digits = 4)
+
+  # Line chart
+  highchart(type = "stock") %>%
+    hc_title(text = paste0("Rolling ", input$window, "-Month Kurtosis")) %>%
+    hc_subtitle(text = "Benchmark = 3 (Normal Distribution)") %>%
+    hc_xAxis(
+      gridLineWidth = 0
+    ) %>%
+    hc_yAxis(
+      gridLineWidth = 0
+    ) %>%
+    hc_yAxis(
+      title = list(text = "Kurtosis"),
+      opposite = FALSE
+    ) %>%
+    hc_add_series(
+      portfolio_rolling_kurtosis_xts,
+      name = "Portfolio Kurtosis",
+      color = "cornflowerblue",
+      id = "Kurtosis"
+    ) %>%
+    hc_add_series(portfolio_calculations()[["flags"]],
+      hcaes(x = date),
+      type = "flags",
+      onSeries = "Kurtosis"
+    ) %>%
+    hc_add_theme(hc_theme_flat()) %>%
+    hc_navigator(enabled = TRUE) %>%
+    hc_scrollbar(enabled = FALSE) %>%
+    hc_exporting(enabled = TRUE)
+})
+```
+
+Performance
+=====================================  
+
+Row {.tabset .tabset-fade}
+-------------------------------------
+
+### Definition 
+
+**Modified Sharpe Ratio**
+
+\begin{align*}
+\frac{\overline{\left(R_{P}-R_{f}\right)}}{\text{Modified VaR}}
+\end{align*}
+
+where
+
+* $R_{P}$ is the vector of returns 
+
+* $R_{f}$ is the risk-free rate
+
+* Modified VaR is the Cornish-Fisher VaR defined earlier
+
+The "modified Sharpe" ratio essentially replaces the classical Sharpe ratio volatility with the Modified Cornish-fisher Value at Risk. We compute the Modified Sharpe Ratio for the same periodicity of the data, i.e., monthly Sharpe Ratio.
+
+**Information Ratio**
+
+\begin{align*}
+\frac{[\overline{R}_{P} \cdot \text{scale}]-[\overline{R}_{B} \cdot \text{scale}]}{\sqrt{\sum_{i=1}^{n} \frac{\left(R_{P}-R_{B}\right)^{2}}{\operatorname{length}\left(R_{P}\right) \sqrt{\text {scale}}}}}
+\end{align*}
+
+where
+
+* the numerator is the difference between the portfolio's annualized return and the Benchmark’s annualized return
+
+* the denominator is the tracking error
+
+**Sortino Ratio**
+
+\begin{align*}
+\frac{\left(\overline{R_{P}-M A R}\right)}{\delta_{M A R}}
+\end{align*}
+
+where
+
+* MAR is the minimally acceptable rate of return
+
+* $\delta_{M A R}$ is the downside deviation
+
+\begin{align*}
+\delta_{M A R}=\sqrt{\sum_{t=1}^{n} \frac{\text{min} \left[\left(R_{t}-M A R\right), 0\right]^{2}}{n}}
+\end{align*}
+
+where 
+
+* $n$ is the number of observations in the subset of the returns series falling below the MAR
+
+The Sortino Ratio improved upon the Sharpe Ratio in that it better accounts for skill and excess performance by using only downside semi-variance as the measure of risk.
+
+
+### Rolling Sharpe Ratio
+
+```{r}
+renderHighchart({
+  highchart(type = "stock") %>%
+    hc_title(text = paste0("Rolling ", input$window, "-Month Sharpe Ratio")) %>%
+    hc_xAxis(
+      gridLineWidth = 0
+    ) %>%
+    hc_yAxis(
+      gridLineWidth = 0
+    ) %>%
+    hc_add_series(portfolio_calculations()[["port_rolling_sharpe"]],
+      name = "Portfolio",
+      color = "cornflowerblue",
+      id = "Portfolio"
+    ) %>%
+    hc_add_series(portfolio_calculations()[["market_rolling_sharpe"]],
+      name = "Market",
+      color = "red",
+      id = "Market"
+    ) %>%
+    hc_yAxis(
+      title = list(text = "Sharpe Ratio"),
+      opposite = FALSE
+    ) %>%
+    hc_add_series(portfolio_calculations()[["flags"]],
+      name = "Events",
+      hcaes(x = date),
+      type = "flags",
+      onSeries = "Portfolio"
+    ) %>%
+    hc_add_theme(hc_theme_flat()) %>%
+    hc_navigator(enabled = TRUE) %>%
+    hc_scrollbar(enabled = FALSE) %>%
+    hc_exporting(enabled = TRUE) %>%
+    hc_legend(
+      enabled = TRUE,
+      align = "right",
+      verticalAlign = "middle",
+      layout = "vertical"
+    )
+})
+```
+
+> **The Sharpe Ratio is a risk-adjusted performance measure. Compare the performance of the portfolio to that of the benchmark ETF in the same period via a rolling window**. 
+
+### Rolling Information Ratio
+
+```{r}
+renderHighchart({
+  highchart(type = "stock") %>%
+    hc_title(text = paste0("Rolling ", input$window, "-Month Information Ratio")) %>%
+    hc_xAxis(
+      gridLineWidth = 0
+    ) %>%
+    hc_yAxis(
+      gridLineWidth = 0
+    ) %>%
+    hc_yAxis(
+      title = list(text = "Information Ratio"),
+      opposite = FALSE
+    ) %>%
+    hc_add_series(portfolio_calculations()[["port_rolling_info"]],
+      name = "Portfolio Information Ratio",
+      color = "cornflowerblue",
+      id = "Portfolio"
+    ) %>%
+    hc_add_series(portfolio_calculations()[["flags"]],
+      hcaes(x = date),
+      type = "flags",
+      onSeries = "Portfolio"
+    ) %>%
+    hc_add_theme(hc_theme_flat()) %>%
+    hc_navigator(enabled = TRUE) %>%
+    hc_scrollbar(enabled = FALSE) %>%
+    hc_exporting(enabled = TRUE)
+})
+```
+
+> **William Sharpe, who created the Sharpe ratio, now also recommends the information ratio, which relates the degree to which an investment has beaten the benchmark (instead of the risk-free rate) to the consistency with which the investment has beaten the benchmark**.
+
+### Rolling Sortino Ratio
+
+```{r}
+renderHighchart({
+  highchart(type = "stock") %>%
+    hc_title(text = paste0("Rolling ", input$window, "-Month Sortino Ratio")) %>%
+    hc_xAxis(
+      gridLineWidth = 0
+    ) %>%
+    hc_yAxis(
+      gridLineWidth = 0
+    ) %>%
+    hc_yAxis(
+      title = list(text = "Sortino Ratio"),
+      opposite = FALSE
+    ) %>%
+    hc_add_series(portfolio_calculations()[["port_rolling_sortino"]],
+      name = "Portfolio",
+      color = "cornflowerblue",
+      id = "Portfolio"
+    ) %>%
+    hc_add_series(portfolio_calculations()[["market_rolling_sortino"]],
+      name = "Market",
+      color = "red",
+      id = "Market"
+    ) %>%
+    hc_add_series(portfolio_calculations()[["flags"]],
+      name = "Events",
+      hcaes(x = date),
+      type = "flags",
+      onSeries = "Portfolio"
+    ) %>%
+    hc_add_theme(hc_theme_flat()) %>%
+    hc_navigator(enabled = TRUE) %>%
+    hc_scrollbar(enabled = FALSE) %>%
+    hc_exporting(enabled = TRUE) %>%
+    hc_legend(
+      enabled = TRUE,
+      align = "right",
+      verticalAlign = "middle",
+      layout = "vertical"
+    )
+})
+```
+
+> **While the rolling method allows for very interesting dynamic visualizations, showing insights that may have been obscured by the total statistic, it does come with a caveat. In the formula for the Sortino Ratio, in particular, we exclude above-MAR returns from the denominator. At times, if the rolling window happens to be too narrow, one may end up with a denominator that includes 1, 2, or 0 downside deviations. This would accurately reflect that the portfolio has done well in that small window, but the ratio may report a misleadingly huge number in the rolling window--- e.g. positive infinity. Those periods, if they exist, can be seen in the line charts where there are "discontinuities" in the time series. This caveat nicely emphasizes why rolling statistics are useful but that periodicity can affect certain statistics, such as the Sortino Ratio, in extreme ways**.
+
+Row {data-height = 50}
+-----------------------------------------------------------------------
+
+### The Overall Sharpe Ratio of the Portfolio
+
+```{r}
+renderValueBox({
+  flexdashboard::valueBox(
+    # The tags$p("Text here") function returns Text here
+    value = tags$p(
+      round(portfolio_calculations()[["port_sharpe"]], digits = 4),
+      style = "font-size: 55%;"
+    ),
+    color = "primary"
+  )
+})
+```
+
+### The Overall Sharpe Ratio of the Benchmark ETF in same time period
+
+```{r}
+renderValueBox({
+  flexdashboard::valueBox(
+    value = tags$p(
+      round(portfolio_calculations()[["market_sharpe"]], digits = 4),
+      style = "font-size: 55%;"
+    ),
+    color = "primary"
+  )
+})
+```
+
+Row {data-height = 50}
+-----------------------------------------------------------------------
+
+### The Overall Information Ratio of the Portfolio Computed Using Monthly Returns of the Benchmark ETF
+
+```{r}
+renderValueBox({
+  flexdashboard::valueBox(
+    value = tags$p(
+      round(portfolio_calculations()[["info_ratio"]], digits = 4),
+      style = "font-size: 55%;"
+    ),
+    color = "primary"
+  )
+})
+```
+
+### The Overall Sortino Ratio of the Portfolio Computed Using the Specified Minimally Acceptable Monthly Return
+
+```{r}
+renderValueBox({
+  flexdashboard::valueBox(
+    value = tags$p(
+      round(portfolio_calculations()[["sortino_ratio"]], digits = 4),
+      style = "font-size: 55%;"
+    ),
+    color = "primary"
+  )
+})
+```
+
+Volatility Contribution
+===================================== 
+
+Row {.tabset .tabset-fade}
+-------------------------------------
+
+### Definitions
+
+**Component Contribution to Portfolio Standard Deviation**
+
+We compute the weighted decomposition of the contribution that each portfolio component makes to the univariate standard deviation of the entire portfolio. Mathematically:
+$$
+\begin{align*}
+C_{i}\operatorname{\sigma_{P}}=\frac{w_{i}\cdot \text{MCTR}_{i}}{\sigma_{P}}
+\end{align*}
+$$
+where 
+
+* $\sigma_{P}$ is the standard deviation of the portfolio
+
+* $w_{i}$ is the weight of component $i$
+
+* MCTR is the marginal contribution to risk of component $i$, which is the partial derivative of the portfolio standard deviation with respect to the individual component weights:
+
+\begin{align*}
+\text{MCTR}_{i}=\frac{\partial\sigma_{P}}{\partial w_{i}}
+\end{align*}
+
+**Component Contribution to Portfolio VaR**
+
+\begin{align*}
+C_{i} \operatorname{VaR}=\frac{w_{i}\partial \operatorname{VaR}}{\partial w_{i}}
+\end{align*}
+
+This approach to decomposing the portfolio VaR is to measure VaR component contribution as the weight of the position in the portfolio times the partial derivative of the portfolio VaR with respect to the component weight.
+
+
+### Percentage Contribution To Portfolio Standard Deviation 
+
+```{r}
+renderPlot({
+
+  # Create bar plot
+  portfolio_calculations()[["Percentage Contribution To Standard Deviation"]] %>%
+    # Group by type, one bar for PCTVaR and another for Weight
+    dplyr::group_by(Type) %>%
+    # Bar plot
+    ggplot() +
+    # The function geom_col ensure that heights of the bars represent values in the data
+    # The function geom_bar uses stat_count by default
+    geom_col(
+      mapping = aes(x = asset, y = Percentage * 100, fill = Type),
+      # The argument position = "dodge" places overlapping objects directly beside each other
+      # This makes it easier to compare individual values
+      position = "dodge"
+    ) +
+    scale_fill_manual(values = c("red", "cornflowerblue")) +
+    labs(
+      title = "Percentage Contribution To Portfolio Modified VaR Versus Weight",
+      x = "ETF",
+      y = "Percentages"
+    ) +
+    guides(fill = guide_legend(title = "Percentages Type")) +
+    theme(
+      panel.background = element_rect(fill = "grey95"),
+      panel.grid = element_blank()
+    )
+})
+```
+
+> **The percentage contribution to portfolio standard deviation is a nice way to visualize the incremental risk to the entire portfolio attributable to each component asset. When viewing the bar plot, focus on comparing the heights of the bars for each assets to see if weights of certain assets need to be adjusted. If the red bar is significant taller than the blue bar for a particular asset, then we may need to lower the allocation of the portfolio to that specific asset. Note that a negative contribution to component VaR indicates a portfolio risk diversifier**.
+
+### Percentage Contribution To Portfolio Modified VaR 
+
+```{r}
+renderPlot({
+
+  # Create bar plot
+  portfolio_calculations()[["Percentage Contribution To VaR"]] %>%
+    # Group by type, one bar for PCTVaR and another for Weight
+    dplyr::group_by(Type) %>%
+    # Bar plot
+    ggplot() +
+    # The function geom_col ensure that heights of the bars represent values in the data
+    # The function geom_bar uses stat_count by default
+    geom_col(
+      mapping = aes(x = asset, y = Percentage * 100, fill = Type),
+      # The argument position = "dodge" places overlapping objects directly beside each other
+      # This makes it easier to compare individual values
+      position = "dodge"
+    ) +
+    scale_fill_manual(values = c("red", "cornflowerblue")) +
+    labs(
+      title = "Percentage Contribution To Portfolio Modified VaR Versus Weight",
+      x = "ETF",
+      y = "Percentages"
+    ) +
+    guides(fill = guide_legend(title = "Percentages Type")) +
+    theme(
+      panel.background = element_rect(fill = "grey95"),
+      panel.grid = element_blank()
+    )
+})
+```
+
+> **Do the weights need to be adjusted?**
+
+### Stacked Area Chart (Contribution to Standard Deivation)
+
+```{r}
+renderHighchart({
+
+  # Get Ticker symbol names
+  tickers <- portfolio_calculations()[["port_rolling_PCTSD"]] %>%
+    dplyr::select(-date) %>%
+    colnames()
+
+  # Convert tibble to xts
+  portfolio_rolling_PCTSD_xts <-
+    portfolio_calculations()[["port_rolling_PCTSD"]] %>%
+    timetk::tk_xts(date_var = date) %>%
+    round(digits = 4)
+
+  highchart() %>%
+    hc_chart(type = "area") %>%
+    hc_title(text = "Stacked Percentage Contribution To Portfolio Standard Deivation") %>%
+    hc_plotOptions(area = list(
+      stacking = "percent",
+      lineColor = "#ffffff",
+      lineWidth = 1,
+      marker = list(
+        lineWidth = 0.2,
+        lineColor = "#ffffff"
+      )
+    )) %>%
+    hc_xAxis(
+      gridLineWidth = 0
+    ) %>%
+    hc_xAxis(
+      type = "datetime"
+    ) %>%
+    hc_yAxis(
+      gridLineWidth = 0
+    ) %>%
+    hc_yAxis(
+      labels = list(format = "{value}%"),
+      opposite = FALSE
+    ) %>%
+    # Matrix sub-setting to select columns from the xts objects
+    hc_add_series(portfolio_rolling_PCTSD_xts[, tickers[[1]]],
+      name = tickers[[1]],
+      id = tickers[[1]]
+    ) %>%
+    hc_add_series(portfolio_rolling_PCTSD_xts[, tickers[[2]]],
+      name = tickers[[2]],
+      id = tickers[[2]]
+    ) %>%
+    hc_add_series(portfolio_rolling_PCTSD_xts[, tickers[[3]]],
+      name = tickers[[3]],
+      id = tickers[[3]]
+    ) %>%
+    hc_add_series(portfolio_rolling_PCTSD_xts[, tickers[[4]]],
+      name = tickers[[4]],
+      id = tickers[[4]]
+    ) %>%
+    hc_add_series(portfolio_rolling_PCTSD_xts[, tickers[[5]]],
+      name = tickers[[5]],
+      id = tickers[[5]]
+    ) %>%
+    hc_add_series(portfolio_rolling_PCTSD_xts[, tickers[[6]]],
+      name = tickers[[6]],
+      id = tickers[[6]]
+    ) %>%
+    hc_add_series(portfolio_rolling_PCTSD_xts[, tickers[[7]]],
+      name = tickers[[7]],
+      id = tickers[[7]]
+    ) %>%
+    hc_add_series(portfolio_rolling_PCTSD_xts[, tickers[[8]]],
+      name = tickers[[8]],
+      id = tickers[[8]]
+    ) %>%
+    hc_add_series(portfolio_rolling_PCTSD_xts[, tickers[[9]]],
+      name = tickers[[9]],
+      id = tickers[[9]]
+    ) %>%
+    hc_add_series(portfolio_rolling_PCTSD_xts[, tickers[[10]]],
+      name = tickers[[10]],
+      id = tickers[[10]]
+    ) %>%
+    hc_tooltip(
+      pointFormat =
+        "
+      {series.name}:{point.percentage:.1f}%",
+      shared = TRUE
+    ) %>%
+    hc_add_theme(hc_theme_flat()) %>%
+    hc_navigator(enabled = TRUE) %>%
+    hc_scrollbar(enabled = FALSE) %>%
+    hc_exporting(enabled = TRUE) %>%
+    hc_legend(
+      enabled = TRUE,
+      align = "right",
+      verticalAlign = "middle",
+      layout = "vertical"
+    )
+})
+```
+
+> **Hover over the stacked area chart for the numeric values. Hover over the legend on the left to see invidual marginal contributions to risk. Click on the legend to remove a series from chart. To use this chart effectively, examining subsets of series separately rather than all at the same time may be necessary to see more clearly the manners in which risk contributions change over time. A negative contribution to Component VaR indicates a portfolio risk diversifier**.
+
+### Rolling Percentage Contribution To Portfolio Standard Deviation
+
+```{r}
+renderHighchart({
+
+  # Get Ticker symbol names
+  tickers <- portfolio_calculations()[["port_rolling_PCTSD"]] %>%
+    dplyr::select(-date) %>%
+    colnames()
+
+  # Convert tibble to xts
+  portfolio_rolling_PCTSD_xts <-
+    portfolio_calculations()[["port_rolling_PCTSD"]] %>%
+    timetk::tk_xts(date_var = date) %>%
+    round(digits = 4)
+
+  highchart(type = "stock") %>%
+    hc_title(
+      text = paste0("Rolling ", input$window, "-Month Percentage Contribution To Risk")
+    ) %>%
+    hc_xAxis(
+      gridLineWidth = 0
+    ) %>%
+    hc_yAxis(
+      gridLineWidth = 0
+    ) %>%
+    hc_yAxis(
+      title = list(text = "Percentage Contribution To Risk"),
+      labels = list(format = "{value}%"),
+      opposite = FALSE
+    ) %>%
+    # Matrix sub-setting to select columns from the xts objects
+    hc_add_series(portfolio_rolling_PCTSD_xts[, tickers[[1]]],
+      name = tickers[[1]],
+      id = tickers[[1]]
+    ) %>%
+    hc_add_series(portfolio_rolling_PCTSD_xts[, tickers[[2]]],
+      name = tickers[[2]],
+      id = tickers[[2]]
+    ) %>%
+    hc_add_series(portfolio_rolling_PCTSD_xts[, tickers[[3]]],
+      name = tickers[[3]],
+      id = tickers[[3]]
+    ) %>%
+    hc_add_series(portfolio_rolling_PCTSD_xts[, tickers[[4]]],
+      name = tickers[[4]],
+      id = tickers[[4]]
+    ) %>%
+    hc_add_series(portfolio_rolling_PCTSD_xts[, tickers[[5]]],
+      name = tickers[[5]],
+      id = tickers[[5]]
+    ) %>%
+    hc_add_series(portfolio_rolling_PCTSD_xts[, tickers[[6]]],
+      name = tickers[[6]],
+      id = tickers[[6]]
+    ) %>%
+    hc_add_series(portfolio_rolling_PCTSD_xts[, tickers[[7]]],
+      name = tickers[[7]],
+      id = tickers[[7]]
+    ) %>%
+    hc_add_series(portfolio_rolling_PCTSD_xts[, tickers[[8]]],
+      name = tickers[[8]],
+      id = tickers[[8]]
+    ) %>%
+    hc_add_series(portfolio_rolling_PCTSD_xts[, tickers[[9]]],
+      name = tickers[[9]],
+      id = tickers[[9]]
+    ) %>%
+    hc_add_series(portfolio_rolling_PCTSD_xts[, tickers[[10]]],
+      name = tickers[[10]],
+      id = tickers[[10]]
+    ) %>%
+    hc_add_theme(hc_theme_flat()) %>%
+    hc_navigator(enabled = TRUE) %>%
+    hc_scrollbar(enabled = FALSE) %>%
+    hc_exporting(enabled = TRUE) %>%
+    hc_legend(
+      enabled = TRUE,
+      align = "right",
+      verticalAlign = "middle",
+      layout = "vertical"
+    )
+})
+```
+
+> **Hover over the line chart for numeric values. Hover over the legend on the left to see invidual percentage contributions to risk. Click on the legend to remove a series from the chart. To use this chart effectively, examining subsets of series separately rather than all at the same time may be necessary to see more clearly the manners in which risk contributions change over time**.

@@ -1,0 +1,1 @@
+This is an interactive portfolio dashboard based on historical data from Yahoo Finance. An associating article on the deployment steps is posted on my personal website at https://www.kenwuyang.com/en/. 
